@@ -1,4 +1,4 @@
-#define EXPORT_SYMTAB
+//#define EXPORT_SYMTAB
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -57,24 +57,32 @@ typedef struct {
 	wait_queue_head_t the_queue_write;
 } queue;
 
+//bitmap
+spinlock_t spinBit;
+char bitmap[256] = {[0 ... 255] '0'};
+
+
+//some static variables
 static queue* queueList[MaxDevices];
 static int Major;   
 static struct task_struct *the_new_daemon;
 static unsigned int bodySize;
 
-
-spinlock_t spinBit;
-char bitmap[256] = {[0 ... 255] '0'};
-
-
-
+//kernel challenge
 static short flagKernel;
 static short flagKill;
 static short flagRelease;
 
+
+//statistics
+atomic_t sleepCount;
+atomic_t usageCount;
+
 //proc
 struct proc_dir_entry *queueSize;
 struct proc_dir_entry *messageSize;
+struct proc_dir_entry *sleepingQueue;
+struct proc_dir_entry *usageProcess;
 
 
 static int mailSlot_open(struct inode *inode, struct file *file) {
@@ -115,6 +123,8 @@ static int mailSlot_open(struct inode *inode, struct file *file) {
 
 	spin_unlock(&spinBit);
 
+	atomic_inc(&usageCount);
+
 	Stampa("Device Opened!");
 
     return 0;
@@ -140,7 +150,13 @@ in:
 
 			Stampa("Goto sleep...");
 
+			atomic_inc(&sleepCount);
+
+			Stampa("Atomic Inc!");
+
 			wait_event_interruptible(queueList[minor] -> the_queue_read, queueList[minor] -> read != queueList[minor] -> write);
+
+			atomic_dec(&sleepCount);
 
 			Stampa("Recheck!");
 
@@ -211,7 +227,11 @@ inn:
 
 			spin_unlock(&queueList[minor] -> lock);
 
+			atomic_inc(&sleepCount);
+
 			wait_event_interruptible(queueList[minor] -> the_queue_write, queueList[minor] -> isFull == 0);
+
+			atomic_dec(&sleepCount);
 
 			Stampa("Recheck!");
 
@@ -339,6 +359,8 @@ static int mailSlot_release(struct inode *inode, struct file *file) {
 
 	spin_unlock(&queueList[minor] -> lock);
 
+	atomic_dec(&usageCount);
+
 	Stampa("End release!");
 
 	return 0;
@@ -414,19 +436,35 @@ long read_proc(struct file *filp,char *buf, size_t count, loff_t *offp ) {
 
 	if (!strncmp(filp->f_path.dentry->d_iname, "QueueMessageSize", strlen("QueueMessageSize"))) {
 
+		Stampa("PROC: QueueMessageSize");
+
 		a = bodySize;
 
-	} else if(!strncmp(filp->f_path.dentry->d_iname, "QueueSize", strlen("QueueMessageSize"))) {
+	} else if(!strncmp(filp->f_path.dentry->d_iname, "QueueSize", strlen("QueueSize"))) {
+
+		Stampa("PROC: Queue_size");
 
 		a = NumMsg;
+
+	} else if(!strncmp(filp->f_path.dentry->d_iname, "SleepingQueue", strlen("SleepingQueue"))) {
+
+		Stampa("PROC: Sleeping_Queue!");
+
+		a = (int)atomic_read(&sleepCount);
+
+	} else if(!strncmp(filp->f_path.dentry->d_iname, "UsageCount", strlen("UsageCount"))) {
+
+		Stampa("PROC: Usage_Count!");
+
+		a = (int)atomic_read(&usageCount);
 
 	}
 
 	sprintf(buff, "%d", a);
-
 	buff[19] = '\n';
 
-	if(*offp >= temp) return 0;
+	if(*offp >= temp) 
+		return 0;
 
 	temp = temp - *offp;
 
@@ -458,7 +496,10 @@ int init_module(void) {
 
 	bodySize = 1024;
 
-	printk(KERN_INFO "MailSlot device registered, it is assigned major number %d\n", Major);
+	Stampa("Atomic variables init...");
+
+	atomic_set(&sleepCount, 0);
+	atomic_set(&usageCount, 0);
 
 	Stampa("Inizializzazione lock...");
 
@@ -467,9 +508,7 @@ int init_module(void) {
 	Stampa("Inizializzazione kernel thread...");
 
 	flagKernel = 0;
-
 	flagKill = 0;
-
 	flagRelease = 0;
 
 	the_new_daemon = kthread_create(thread_function,NULL,name);
@@ -477,8 +516,11 @@ int init_module(void) {
 	Stampa("Inizializzazione proc dir and files...");
 
 	messageSize = proc_create("QueueMessageSize", 0, NULL, &proc_fops);
-
 	queueSize = proc_create("QueueSize", 0, NULL, &proc_fops);
+	sleepingQueue = proc_create("SleepingQueue", 0, NULL, &proc_fops);
+	usageProcess = proc_create("UsageCount", 0, NULL, &proc_fops);
+
+	printk(KERN_INFO "MailSlot device registered, it is assigned major number %d\n", Major);
 
 	return 0;
 }
@@ -491,6 +533,8 @@ void cleanup_module(void) {
 
 	remove_proc_entry("QueueMessageSize",NULL);
 	remove_proc_entry("QueueSize",NULL);
+	remove_proc_entry("SleepingQueue",NULL);
+	remove_proc_entry("UsageCount", NULL);
 
 	//challenge kernel thread
 
