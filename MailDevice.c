@@ -32,7 +32,7 @@ long read_proc(struct file *filp,char *buf, size_t count, loff_t *offp );
 
 #define DEVICE_NAME "MailSlot"
 #define Stampa(s)	printk("%s: %s\n", DEVICE_NAME, s)
-#define NumMsg 		3
+#define NumMsg 		5
 #define MaxDevices  256
 #define TimeKernelSleep 2000
 
@@ -148,17 +148,18 @@ in:
 
 			spin_unlock(&queueList[minor] -> lock);
 
-			Stampa("Goto sleep...");
+			Stampa("Goto sleep on read...");
 
 			atomic_inc(&sleepCount);
 
 			Stampa("Atomic Inc!");
 
-			wait_event_interruptible(queueList[minor] -> the_queue_read, queueList[minor] -> read != queueList[minor] -> write);
+			wait_event_interruptible(queueList[minor] -> the_queue_read, (queueList[minor] -> read != queueList[minor] -> write)
+																		  || (queueList[minor] -> isFull));//TODO
 
 			atomic_dec(&sleepCount);
 
-			Stampa("Recheck!");
+			Stampa("Recheck read!");
 
 			goto in;
 
@@ -179,10 +180,10 @@ in:
 		return -1;
 	}
 
-	printk("%s: DEBUG, size -> %d\n", DEVICE_NAME, queueList[minor] -> queue[queueList[minor] -> read].size);
-
 	copy_to_user(buff, queueList[minor] -> queue[queueList[minor] -> read].body, 
 											queueList[minor] -> queue[queueList[minor] -> read].size);
+
+	ret = queueList[minor] -> queue[queueList[minor] -> read].size;
 
 	//deallocazionestruttura messaggi dopo la lettura
 	kfree(queueList[minor] -> queue[queueList[minor] -> read].body);
@@ -195,8 +196,6 @@ in:
 		queueList[minor] -> isFull = 0;
 		wake_up_all(&queueList[minor] -> the_queue_write);
 	}
-
-	ret = queueList[minor] -> queue[queueList[minor] -> read].size;
 
 	spin_unlock(&queueList[minor] -> lock);
 
@@ -225,15 +224,19 @@ inn:
 
 		if(queueList[minor] -> isBlockingWrite) {
 
+			wake_up_all(&queueList[minor] -> the_queue_read);
+
 			spin_unlock(&queueList[minor] -> lock);
 
+			Stampa("Goto sleep on write...");
+			
 			atomic_inc(&sleepCount);
 
 			wait_event_interruptible(queueList[minor] -> the_queue_write, queueList[minor] -> isFull == 0);
 
 			atomic_dec(&sleepCount);
 
-			Stampa("Recheck!");
+			Stampa("Recheck write!");
 
 			goto inn;
 
@@ -256,17 +259,15 @@ inn:
 
 	queueList[minor] -> usage[queueList[minor] -> write] = 1;
 
-	printk("%s: DEBUG, size -> %ld\n", DEVICE_NAME, len);
-
 	copy_from_user(queueList[minor]->queue[queueList[minor] -> write].body, buff, len);
 	queueList[minor] -> write = (queueList[minor] -> write + 1) % NumMsg;
 
 	if(queueList[minor] -> write  == queueList[minor] -> read)
 		queueList[minor] -> isFull = 1;
 
-	spin_unlock(&queueList[minor] -> lock);
-
 	wake_up_all(&queueList[minor] -> the_queue_read);
+
+	spin_unlock(&queueList[minor] -> lock);
 
 	Stampa("Write finish!");
 
