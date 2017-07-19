@@ -23,13 +23,14 @@ __attribute__((section("__versions"))) = {
 	{ 0xbbb6cb28, __VMLINUX_SYMBOL_STR(proc_create_data) },
 	{ 0xe7ae2802, __VMLINUX_SYMBOL_STR(kthread_create_on_node) },
 	{ 0xd2296fc, __VMLINUX_SYMBOL_STR(__register_chrdev) },
+	{ 0xcf21d241, __VMLINUX_SYMBOL_STR(__wake_up) },
 	{ 0x4f6b400b, __VMLINUX_SYMBOL_STR(_copy_from_user) },
 	{ 0xfb578fc5, __VMLINUX_SYMBOL_STR(memset) },
 	{ 0xd2b09ce5, __VMLINUX_SYMBOL_STR(__kmalloc) },
-	{ 0xcf21d241, __VMLINUX_SYMBOL_STR(__wake_up) },
 	{ 0xfa66f77c, __VMLINUX_SYMBOL_STR(finish_wait) },
 	{ 0x34f22f94, __VMLINUX_SYMBOL_STR(prepare_to_wait_event) },
 	{ 0x1000e51, __VMLINUX_SYMBOL_STR(schedule) },
+	{ 0x4bebaf06, __VMLINUX_SYMBOL_STR(current_task) },
 	{ 0xe568dcdf, __VMLINUX_SYMBOL_STR(wake_up_process) },
 	{ 0xf432dd3d, __VMLINUX_SYMBOL_STR(__init_waitqueue_head) },
 	{ 0xdf3deb56, __VMLINUX_SYMBOL_STR(kmem_cache_alloc_trace) },
@@ -53,4 +54,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "7DB381C573BE86010CB9067");
+MODULE_INFO(srcversion, "69C12A6FDBEC2009A50D8F6");

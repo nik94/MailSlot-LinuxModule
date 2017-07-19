@@ -21,21 +21,21 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("FEDERICO PALMARO");
 
+
+#define DEVICE_NAME "MailSlot"
+#define Stampa(s)	printk("%s: %s\n", DEVICE_NAME, s)
+#define NumMsg 		128
+#define MaxDevices  256
+#define TimeKernelSleep 2000
+#define MaxPid	32768
+
+
 static int mailSlot_open(struct inode *, struct file *);
 static int mailSlot_release(struct inode *, struct file *);
 static ssize_t mailSlot_write(struct file *, const char *, size_t, loff_t *);
 static ssize_t mailSlot_read(struct file *filp, char __user *buff, size_t count, loff_t *off);
 static long mailSlot_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_param);
 long read_proc(struct file *filp,char *buf, size_t count, loff_t *offp );
-
-
-
-#define DEVICE_NAME "MailSlot"
-#define Stampa(s)	printk("%s: %s\n", DEVICE_NAME, s)
-#define NumMsg 		5
-#define MaxDevices  256
-#define TimeKernelSleep 2000
-
 
 
 typedef struct msg {
@@ -48,14 +48,22 @@ typedef struct {
 	msg queue[NumMsg];
 	short usage[NumMsg];
 	short isFull;
-	short read;
-	short write;
 	short isBlockingRead;
 	short isBlockingWrite;
+	unsigned int read;
+	unsigned int write;
 	unsigned int counter;
 	wait_queue_head_t the_queue_read;
 	wait_queue_head_t the_queue_write;
 } queue;
+
+typedef struct taskS{
+	struct task_struct *proc;
+	struct taskS *next;
+} taskS;
+
+//array per pid
+//taskS* listTask[MaxPid] = {[0 ... MaxPid-1] NULL};
 
 //bitmap
 spinlock_t spinBit;
@@ -72,6 +80,15 @@ static unsigned int bodySize;
 static short flagKernel;
 static short flagKill;
 static short flagRelease;
+
+//queue for raed/write
+spinlock_t queue_r;
+spinlock_t queue_w;
+taskS tail_r = {NULL, NULL};
+taskS head_r = {NULL, &tail_r};
+taskS tail_w = {NULL, NULL};
+taskS head_w = {NULL, &tail_w};
+
 
 
 //statistics
@@ -134,6 +151,10 @@ static ssize_t mailSlot_read(struct file *filp, char __user *buff, size_t count,
 
 	int ret;
 	unsigned int minor;
+	taskS *tmp;
+	taskS *tmp2;
+	taskS *me;
+	struct task_struct *ttmp;
 
 	Stampa("Read!");
 
@@ -152,10 +173,23 @@ in:
 
 			atomic_inc(&sleepCount);
 
-			Stampa("Atomic Inc!");
+			//put in queue
+			me = (taskS*) kmalloc(sizeof(taskS), GFP_KERNEL);
+			memset(me, 0, sizeof(taskS));
+			me->proc = current;
+			tmp = &head_r;
+			spin_lock(&queue_r);
 
-			wait_event_interruptible(queueList[minor] -> the_queue_read, (queueList[minor] -> read != queueList[minor] -> write)
-																		  || (queueList[minor] -> isFull));//TODO
+			while(tmp->next != &tail_r)
+				tmp = tmp->next;
+
+			me->next = tmp->next;
+			tmp->next = me;
+			spin_unlock(&queue_r);
+			//end put queue
+
+			wait_event_interruptible(queueList[minor] -> the_queue_read, 
+				(queueList[minor] -> read != queueList[minor] -> write) || (queueList[minor] -> isFull));
 
 			atomic_dec(&sleepCount);
 
@@ -183,8 +217,6 @@ in:
 	ret = copy_to_user(buff, queueList[minor] -> queue[queueList[minor] -> read].body, 
 											queueList[minor] -> queue[queueList[minor] -> read].size);
 
-	//ret = queueList[minor] -> queue[queueList[minor] -> read].size;
-
 	//deallocazionestruttura messaggi dopo la lettura
 	kfree(queueList[minor] -> queue[queueList[minor] -> read].body);
 	queueList[minor] -> queue[queueList[minor] -> read].size = 0;
@@ -194,7 +226,17 @@ in:
 
 	if(queueList[minor] -> isFull) {
 		queueList[minor] -> isFull = 0;
-		wake_up_all(&queueList[minor] -> the_queue_write);
+		
+		//wakeup process
+		spin_lock(&queue_w);
+		if(head_w.next != &tail_w) {
+			tmp2 = head_w.next;
+			head_w.next = tmp2->next;
+			ttmp = tmp2->proc;
+			kfree(tmp2);
+			wake_up_process(ttmp);
+		}
+		spin_unlock(&queue_w);
 	}
 
 	spin_unlock(&queueList[minor] -> lock);
@@ -209,6 +251,10 @@ static ssize_t mailSlot_write(struct file *filp, const char *buff, size_t len, l
 
 	unsigned int minor;
 	int ret;
+	taskS *tmp;
+	taskS *tmp2;
+	taskS *me;
+	struct task_struct *ttmp;
 
 	Stampa("Write!");
 
@@ -225,13 +271,28 @@ inn:
 
 		if(queueList[minor] -> isBlockingWrite) {
 
-			wake_up_all(&queueList[minor] -> the_queue_read);
-
 			spin_unlock(&queueList[minor] -> lock);
 
 			Stampa("Goto sleep on write...");
 			
 			atomic_inc(&sleepCount);
+
+			//put in queue
+			me = (taskS*) kmalloc(sizeof(taskS), GFP_KERNEL);
+			memset(me, 0, sizeof(taskS));
+			me->proc = current;
+
+			tmp = &head_w;
+
+			spin_lock(&queue_w);
+
+			while(tmp->next != &tail_w)
+				tmp = tmp->next;
+
+			me->next = tmp->next;
+			tmp->next = me;
+
+			spin_unlock(&queue_w);
 
 			wait_event_interruptible(queueList[minor] -> the_queue_write, queueList[minor] -> isFull == 0);
 
@@ -263,10 +324,25 @@ inn:
 	ret = copy_from_user(queueList[minor]->queue[queueList[minor] -> write].body, buff, len);
 	queueList[minor] -> write = (queueList[minor] -> write + 1) % NumMsg;
 
-	if(queueList[minor] -> write  == queueList[minor] -> read)
+	if(queueList[minor] -> write  == queueList[minor] -> read) {
 		queueList[minor] -> isFull = 1;
+	} else {
+
+		//wakeup process
+		spin_lock(&queue_r);
+		if(head_r.next != &tail_r) {
+			tmp2 = head_r.next;
+			head_r.next = tmp2->next;
+			ttmp = tmp2->proc;
+			kfree(tmp2);
+			wake_up_process(ttmp);
+		}
+		spin_unlock(&queue_r);
+
+	}
 
 	wake_up_all(&queueList[minor] -> the_queue_read);
+
 
 	spin_unlock(&queueList[minor] -> lock);
 
@@ -333,7 +409,7 @@ static long mailSlot_ioctl(struct file *file, unsigned int ioctl_num, unsigned l
 				break;
 
 		default: //error
-				Stampa("Comandonon riconosciuto");
+				Stampa("Comando non riconosciuto");
 				spin_unlock(&queueList[minor] -> lock);
 				return -1;
 
@@ -506,6 +582,8 @@ int init_module(void) {
 	Stampa("Inizializzazione lock...");
 
 	spin_lock_init(&spinBit);
+	spin_lock_init(&queue_r);
+	spin_lock_init(&queue_w);
 
 	Stampa("Inizializzazione kernel thread...");
 
