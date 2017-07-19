@@ -180,10 +180,10 @@ in:
 		return -1;
 	}
 
-	copy_to_user(buff, queueList[minor] -> queue[queueList[minor] -> read].body, 
+	ret = copy_to_user(buff, queueList[minor] -> queue[queueList[minor] -> read].body, 
 											queueList[minor] -> queue[queueList[minor] -> read].size);
 
-	ret = queueList[minor] -> queue[queueList[minor] -> read].size;
+	//ret = queueList[minor] -> queue[queueList[minor] -> read].size;
 
 	//deallocazionestruttura messaggi dopo la lettura
 	kfree(queueList[minor] -> queue[queueList[minor] -> read].body);
@@ -208,6 +208,7 @@ in:
 static ssize_t mailSlot_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
 
 	unsigned int minor;
+	int ret;
 
 	Stampa("Write!");
 
@@ -253,13 +254,13 @@ inn:
 	
 	//allocare struttura messaggio
 	//GFP_KERNEL memoria kernel, può dormire
-	queueList[minor] -> queue[queueList[minor] -> write].body = kmalloc(sizeof(char)*bodySize, GFP_KERNEL);
+	queueList[minor] -> queue[queueList[minor] -> write].body = kmalloc(sizeof(char)*len, GFP_KERNEL);
 	queueList[minor] -> queue[queueList[minor] -> write].size = len;
-	memset(queueList[minor] -> queue[queueList[minor] -> write].body, 0, sizeof(char)*bodySize);
+	memset(queueList[minor] -> queue[queueList[minor] -> write].body, 0, sizeof(char)*len);
 
 	queueList[minor] -> usage[queueList[minor] -> write] = 1;
 
-	copy_from_user(queueList[minor]->queue[queueList[minor] -> write].body, buff, len);
+	ret = copy_from_user(queueList[minor]->queue[queueList[minor] -> write].body, buff, len);
 	queueList[minor] -> write = (queueList[minor] -> write + 1) % NumMsg;
 
 	if(queueList[minor] -> write  == queueList[minor] -> read)
@@ -271,7 +272,7 @@ inn:
 
 	Stampa("Write finish!");
 
-	return len;
+	return ret;
 	
 }
 
