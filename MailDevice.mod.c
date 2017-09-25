@@ -23,7 +23,6 @@ __attribute__((section("__versions"))) = {
 	{ 0xbbb6cb28, __VMLINUX_SYMBOL_STR(proc_create_data) },
 	{ 0xe7ae2802, __VMLINUX_SYMBOL_STR(kthread_create_on_node) },
 	{ 0xd2296fc, __VMLINUX_SYMBOL_STR(__register_chrdev) },
-	{ 0xcf21d241, __VMLINUX_SYMBOL_STR(__wake_up) },
 	{ 0x4f6b400b, __VMLINUX_SYMBOL_STR(_copy_from_user) },
 	{ 0xfb578fc5, __VMLINUX_SYMBOL_STR(memset) },
 	{ 0xd2b09ce5, __VMLINUX_SYMBOL_STR(__kmalloc) },
@@ -40,6 +39,7 @@ __attribute__((section("__versions"))) = {
 	{ 0x91715312, __VMLINUX_SYMBOL_STR(sprintf) },
 	{ 0xf9a482f9, __VMLINUX_SYMBOL_STR(msleep) },
 	{ 0xda3e43d1, __VMLINUX_SYMBOL_STR(_raw_spin_unlock) },
+	{ 0xcf21d241, __VMLINUX_SYMBOL_STR(__wake_up) },
 	{ 0xd2f1b260, __VMLINUX_SYMBOL_STR(interruptible_sleep_on) },
 	{ 0x37a0cba, __VMLINUX_SYMBOL_STR(kfree) },
 	{ 0xd52bf1ce, __VMLINUX_SYMBOL_STR(_raw_spin_lock) },
@@ -54,4 +54,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "69C12A6FDBEC2009A50D8F6");
+MODULE_INFO(srcversion, "64AE00C09221162ED65D550");

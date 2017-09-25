@@ -62,9 +62,6 @@ typedef struct taskS{
 	struct taskS *next;
 } taskS;
 
-//array per pid
-//taskS* listTask[MaxPid] = {[0 ... MaxPid-1] NULL};
-
 //bitmap
 spinlock_t spinBit;
 char bitmap[256] = {[0 ... 255] '0'};
@@ -80,6 +77,7 @@ static unsigned int bodySize;
 static short flagKernel;
 static short flagKill;
 static short flagRelease;
+wait_queue_head_t waitChallenge;
 
 //queue for raed/write
 spinlock_t queue_r;
@@ -155,10 +153,15 @@ static ssize_t mailSlot_read(struct file *filp, char __user *buff, size_t count,
 	taskS *tmp2;
 	taskS *me;
 	struct task_struct *ttmp;
+	taskS *ttmp2;
+	struct task_struct *tttmp;
+
 
 	Stampa("Read!");
 
 	minor = iminor(filp->f_path.dentry->d_inode);
+
+	printk("%s: Minor number -> %d\n", DEVICE_NAME, minor);
 
 in:
 	spin_lock(&queueList[minor] -> lock);
@@ -168,6 +171,10 @@ in:
 		if(queueList[minor] -> isBlockingRead) {
 
 			spin_unlock(&queueList[minor] -> lock);
+
+			/*******************************************/
+			/* SISTEMARE PROBLEMA CONCORRENZA QUI!     */
+			/*******************************************/
 
 			Stampa("Goto sleep on read...");
 
@@ -209,8 +216,20 @@ in:
 	}
 
 	if(count < queueList[minor] -> queue[queueList[minor] -> read].size) {
-		spin_unlock(&queueList[minor] -> lock);
-		Stampa("Buffer for read is smaler than message!");
+		Stampa("Buffer for read is smaller than message!");
+
+		spin_lock(&queue_r);
+		if(head_r.next != &tail_r) {
+			tmp2 = head_r.next;
+			head_r.next = tmp2->next;
+			ttmp = tmp2->proc;
+			kfree(tmp2);
+			wake_up_process(ttmp);
+		}
+		spin_unlock(&queue_r);
+
+		spin_unlock(&queueList[minor] -> lock); 
+
 		return -1;
 	}
 
@@ -228,13 +247,14 @@ in:
 		queueList[minor] -> isFull = 0;
 		
 		//wakeup process
+		
 		spin_lock(&queue_w);
 		if(head_w.next != &tail_w) {
-			tmp2 = head_w.next;
-			head_w.next = tmp2->next;
-			ttmp = tmp2->proc;
-			kfree(tmp2);
-			wake_up_process(ttmp);
+			ttmp2 = head_w.next;
+			head_w.next = ttmp2->next;
+			tttmp = tmp2->proc;
+			kfree(ttmp2);
+			wake_up_process(tttmp);
 		}
 		spin_unlock(&queue_w);
 	}
@@ -262,6 +282,8 @@ static ssize_t mailSlot_write(struct file *filp, const char *buff, size_t len, l
 		len = bodySize;
 
 	minor = iminor(filp->f_path.dentry->d_inode);
+
+	printk("%s: Minor number -> %d\n", DEVICE_NAME, minor);
 
 inn:
 
@@ -341,9 +363,6 @@ inn:
 
 	}
 
-	wake_up_all(&queueList[minor] -> the_queue_read);
-
-
 	spin_unlock(&queueList[minor] -> lock);
 
 	Stampa("Write finish!");
@@ -392,7 +411,7 @@ static long mailSlot_ioctl(struct file *file, unsigned int ioctl_num, unsigned l
 		case 6: //set non-blocking R/W
 				queueList[minor] -> isBlockingRead = 0;
 				queueList[minor] -> isBlockingWrite = 0;
-				Stampa("Bloking Read/Write");
+				Stampa("Non-Bloking Read/Write");
 				break;
 
 		case 7: //start kernel thread
@@ -495,6 +514,7 @@ int thread_function(void* data) {
 			}
 		} else {
 			flagRelease = 1;
+			wake_up(&waitChallenge);
 			return 0;
 		}
 	}
@@ -574,6 +594,8 @@ int init_module(void) {
 
 	bodySize = 1024;
 
+	init_waitqueue_head(&waitChallenge);
+
 	Stampa("Atomic variables init...");
 
 	atomic_set(&sleepCount, 0);
@@ -624,9 +646,7 @@ void cleanup_module(void) {
 
 	wake_up_process(the_new_daemon);
 
-	while(!flagRelease) {
-		msleep(500);
-	}
+	wait_event_interruptible(waitChallenge, flagRelease == 1);
 
 	//release memory
 
